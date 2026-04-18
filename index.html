@@ -571,7 +571,7 @@ async function runSim() {
   try {
     setStatus('<span class="spinner"></span>Running MACE + NEB simulation (~2 min)...', '');
 
-    const res = await fetch('https://throttle-winter-cringe.ngrok-free.app/simulate', {
+    const res = await fetch('https://throttle-winter-cringe.ngrok-free.dev/simulate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reaction: rxn })
@@ -694,7 +694,7 @@ async function askGroq() {
   chatHistory.push({ role: 'user', content: question });
 
   try {
-    const res = await fetch('https://throttle-winter-cringe.ngrok-free.app/chat', {
+    const res = await fetch('https://throttle-winter-cringe.ngrok-free.dev/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
