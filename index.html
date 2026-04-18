@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>BondBreak — Real ML Molecular Simulation</title>
+<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050508;
+    --surface: #0d0d14;
+    --border: #1a1a2e;
+    --accent: #00f5c4;
+    --accent2: #7b61ff;
+    --text: #e8e8f0;
+    --muted: #555570;
+    --error: #ff4d6d;
+    --warn: #ffb347;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Subtle grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,245,196,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,245,196,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 40px 20px 80px;
+  }
+
+  /* Header */
+  header {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(2.4rem, 8vw, 4rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+    margin-bottom: 10px;
+  }
+
+  .tagline {
+    color: var(--muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0,245,196,0.08);
+    border: 1px solid rgba(0,245,196,0.2);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 0.65rem;
+    color: var(--accent);
+    letter-spacing: 0.1em;
+    margin-top: 14px;
+  }
+
+  .badge::before {
+    content: '●';
+    font-size: 0.5rem;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* Input area */
+  .input-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+
+  .input-label {
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 10px;
+  }
+
+  #rxn {
+    flex: 1;
+    padding: 14px 16px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  #rxn:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0,245,196,0.08);
+  }
+
+  #rxn::placeholder { color: var(--muted); }
+
+  #simulateBtn {
+    padding: 14px 24px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 10px;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  #simulateBtn:hover { background: #00ddb0; transform: translateY(-1px); }
+  #simulateBtn:active { transform: translateY(0); }
+  #simulateBtn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; transform: none; }
+
+  /* Examples */
+  .examples {
+    margin-top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .example-chip {
+    padding: 5px 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .example-chip:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(0,245,196,0.05);
+  }
+
+  /* Status */
+  #status {
+    font-size: 0.8rem;
+    min-height: 20px;
+    margin-top: 12px;
+    color: var(--accent);
+  }
+
+  #status.error { color: var(--error); }
+  #status.warning { color: var(--warn); }
+
+  #parsed-info {
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-top: 6px;
+    min-height: 16px;
+  }
+
+  /* Viewer */
+  #viewer-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    display: none;
+  }
+
+  #viewer-section.visible { display: block; }
+
+  .viewer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .viewer-title {
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  .speed-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.65rem;
+    color: var(--muted);
+  }
+
+  #speedSlider {
+    width: 80px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .frame-counter {
+    font-size: 0.65rem;
+    color: var(--muted);
+    min-width: 60px;
+    text-align: right;
+  }
+
+  #viewer {
+    width: 100%;
+    height: 420px;
+    position: relative;
+    background: #020205;
+  }
+
+  /* Legend */
+  #legend {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .legend-title {
+    font-size: 0.6rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-right: 4px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.7rem;
+    color: var(--text);
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* Groq chat */
+  #chat-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    margin-top: 20px;
+    overflow: hidden;
+    display: none;
+  }
+
+  #chat-section.visible { display: block; }
+
+  .chat-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .chat-header::before {
+    content: '⚗';
+    font-size: 1rem;
+    -webkit-text-fill-color: initial;
+    color: var(--accent2);
+  }
+
+  #chat-messages {
+    padding: 16px 20px;
+    max-height: 240px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .chat-msg {
+    font-size: 0.8rem;
+    line-height: 1.6;
+    border-radius: 10px;
+    padding: 10px 14px;
+    max-width: 92%;
+  }
+
+  .chat-msg.user {
+    background: rgba(123,97,255,0.12);
+    border: 1px solid rgba(123,97,255,0.2);
+    color: var(--text);
+    align-self: flex-end;
+  }
+
+  .chat-msg.ai {
+    background: rgba(0,245,196,0.06);
+    border: 1px solid rgba(0,245,196,0.15);
+    color: var(--text);
+    align-self: flex-start;
+  }
+
+  .chat-msg.thinking {
+    color: var(--muted);
+    font-style: italic;
+    background: none;
+    border: none;
+    padding: 4px 0;
+  }
+
+  .chat-input-row {
+    display: flex;
+    gap: 10px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+  }
+
+  #chatInput {
+    flex: 1;
+    padding: 10px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.8rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  #chatInput:focus { border-color: var(--accent2); }
+  #chatInput::placeholder { color: var(--muted); }
+
+  #askBtn {
+    padding: 10px 18px;
+    background: var(--accent2);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  #askBtn:hover { background: #9580ff; }
+  #askBtn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    margin-top: 48px;
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+  }
+
+  footer a { color: var(--muted); text-decoration: none; }
+  footer a:hover { color: var(--accent); }
+
+  /* Loading spinner */
+  .spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 2px solid rgba(0,245,196,0.2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 500px) {
+    .input-row { flex-direction: column; }
+    #simulateBtn { width: 100%; }
+    #viewer { height: 320px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">BondBreak</div>
+    <div class="tagline">Real ML Molecular Simulation</div>
+    <div class="badge">MACE · NEB · ZeroGPU</div>
+  </header>
+
+  <div class="input-section">
+    <div class="input-label">Type any chemical reaction</div>
+    <div class="input-row">
+      <input id="rxn" type="text" placeholder="e.g. ethanol oxidation" autocomplete="off" />
+      <button id="simulateBtn" onclick="runSim()">Simulate ⚛️</button>
+    </div>
+    <div class="examples">
+      <span class="example-chip" onclick="setExample(this)">SN2 substitution</span>
+      <span class="example-chip" onclick="setExample(this)">aldol condensation</span>
+      <span class="example-chip" onclick="setExample(this)">ethanol oxidation</span>
+      <span class="example-chip" onclick="setExample(this)">water formation</span>
+      <span class="example-chip" onclick="setExample(this)">methane combustion</span>
+    </div>
+    <div id="status"></div>
+    <div id="parsed-info"></div>
+  </div>
+
+  <div id="viewer-section">
+    <div class="viewer-header">
+      <div class="viewer-title">3D Transition State Path</div>
+      <div class="controls">
+        <div class="speed-control">
+          <span>speed</span>
+          <input type="range" id="speedSlider" min="1" max="10" value="5" oninput="updateSpeed(this.value)">
+          <span id="speedLabel">5</span>
+        </div>
+        <div class="frame-counter" id="frameCounter">frame 0/0</div>
+      </div>
+    </div>
+    <div id="viewer"></div>
+    <div id="legend"></div>
+  </div>
+
+  <div id="chat-section">
+    <div class="chat-header">Ask about this reaction</div>
+    <div id="chat-messages"></div>
+    <div class="chat-input-row">
+      <input id="chatInput" type="text" placeholder="Why did this bond break? What's the transition state?" />
+      <button id="askBtn" onclick="askGroq()">Ask</button>
+    </div>
+  </div>
+
+  <footer>
+    Built with MACE · ASE · NEB · Groq · 3Dmol.js<br>
+    <a href="https://github.com/ACEsuit/mace" target="_blank">MACE</a> ·
+    <a href="https://wiki.fysik.dtu.dk/ase/" target="_blank">ASE</a> ·
+    <a href="https://console.groq.com" target="_blank">Groq</a>
+  </footer>
+
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let viewer = null;
+let animInterval = null;
+let currentFrames = [];
+let currentSymbols = [];
+let currentReaction = '';
+let frameIndex = 0;
+let animSpeed = 150; // ms per frame
+let chatHistory = [];
+
+// CPK colors (standard chemistry element colors)
+const ELEMENT_COLORS = {
+  H:  '#ffffff', C:  '#404040', N:  '#3050f8', O:  '#ff0d0d',
+  F:  '#90e050', P:  '#ff8000', S:  '#ffff30', Cl: '#1ff01f',
+  Br: '#a62929', I:  '#940094', Na: '#ab5cf2', K:  '#8f40d4',
+  Ca: '#3dff00', Fe: '#e06633', Cu: '#c88033', Zn: '#7d80b0',
+  default: '#cccccc'
+};
+
+function elementColor(sym) {
+  return ELEMENT_COLORS[sym] || ELEMENT_COLORS.default;
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────────
+function setStatus(msg, type = '') {
+  const el = document.getElementById('status');
+  el.className = type;
+  el.innerHTML = msg;
+}
+
+function setParsed(parsed) {
+  if (!parsed) { document.getElementById('parsed-info').textContent = ''; return; }
+  const r = parsed.reactants.join(' + ');
+  const p = parsed.products.join(' + ');
+  document.getElementById('parsed-info').textContent = `→ ${r}  ⟶  ${p}`;
+}
+
+function setExample(chip) {
+  document.getElementById('rxn').value = chip.textContent;
+}
+
+function updateSpeed(val) {
+  document.getElementById('speedLabel').textContent = val;
+  // Higher slider value = faster = lower interval
+  animSpeed = Math.round(1200 / (parseInt(val) + 1));
+  if (animInterval) restartAnimation();
+}
+
+// ── Simulation ────────────────────────────────────────────────────────────────
+async function runSim() {
+  const rxn = document.getElementById('rxn').value.trim();
+  if (!rxn) return;
+
+  currentReaction = rxn;
+  if (animInterval) { clearInterval(animInterval); animInterval = null; }
+
+  document.getElementById('simulateBtn').disabled = true;
+  setStatus('<span class="spinner"></span>Parsing reaction with Groq...', '');
+  setParsed(null);
+  document.getElementById('viewer-section').classList.remove('visible');
+  document.getElementById('chat-section').classList.remove('visible');
+
+  try {
+    setStatus('<span class="spinner"></span>Running MACE + NEB simulation (~2 min)...', '');
+
+    const res = await fetch('https://throttle-winter-cringe.ngrok-free.app/simulate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reaction: rxn })
+    });
+
+    const data = await res.json();
+
+    if (data.error) {
+      setStatus('❌ ' + data.error, 'error');
+      document.getElementById('simulateBtn').disabled = false;
+      return;
+    }
+
+    currentFrames = data.frames;
+    currentSymbols = data.symbols;
+    setParsed(data.parsed);
+
+    setStatus(`✓ ${data.frame_count} frames · ${currentSymbols.length} atoms · simulation complete`, '');
+
+    buildLegend(currentSymbols);
+    document.getElementById('viewer-section').classList.add('visible');
+    document.getElementById('chat-section').classList.add('visible');
+
+    // Reset chat for new reaction
+    chatHistory = [];
+    document.getElementById('chat-messages').innerHTML = '';
+
+    startAnimation();
+
+  } catch (e) {
+    setStatus('❌ Connection error — is the backend running?', 'error');
+  }
+
+  document.getElementById('simulateBtn').disabled = false;
+}
+
+// ── Animation ─────────────────────────────────────────────────────────────────
+function buildXYZ(positions, symbols) {
+  let xyz = positions.length + '\n\n';
+  positions.forEach((pos, i) => {
+    xyz += `${symbols[i]} ${pos[0].toFixed(4)} ${pos[1].toFixed(4)} ${pos[2].toFixed(4)}\n`;
+  });
+  return xyz;
+}
+
+function startAnimation() {
+  const el = document.getElementById('viewer');
+  el.innerHTML = '';
+  viewer = $3Dmol.createViewer(el, { backgroundColor: '#020205' });
+  frameIndex = 0;
+  restartAnimation();
+}
+
+function restartAnimation() {
+  if (animInterval) clearInterval(animInterval);
+  animInterval = setInterval(drawFrame, animSpeed);
+}
+
+function drawFrame() {
+  if (!currentFrames.length) return;
+  const positions = currentFrames[frameIndex];
+  const xyz = buildXYZ(positions, currentSymbols);
+
+  viewer.clear();
+  viewer.addModel(xyz, 'xyz');
+
+  // Style with CPK colors per element
+  currentSymbols.forEach((sym, idx) => {
+    viewer.setStyle(
+      { index: idx },
+      {
+        sphere: { radius: 0.35, color: elementColor(sym) },
+        stick:  { radius: 0.12, color: '#888888' }
+      }
+    );
+  });
+
+  viewer.zoomTo();
+  viewer.render();
+
+  document.getElementById('frameCounter').textContent =
+    `frame ${frameIndex + 1}/${currentFrames.length}`;
+
+  frameIndex = (frameIndex + 1) % currentFrames.length;
+}
+
+// ── Legend ────────────────────────────────────────────────────────────────────
+function buildLegend(symbols) {
+  const unique = [...new Set(symbols)].sort();
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '<span class="legend-title">elements</span>';
+  unique.forEach(sym => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = `
+      <div class="legend-dot" style="background:${elementColor(sym)}"></div>
+      <span>${sym}</span>
+    `;
+    legend.appendChild(item);
+  });
+}
+
+// ── Groq Chat ─────────────────────────────────────────────────────────────────
+async function askGroq() {
+  const input = document.getElementById('chatInput');
+  const question = input.value.trim();
+  if (!question) return;
+
+  input.value = '';
+  document.getElementById('askBtn').disabled = true;
+
+  appendChatMsg(question, 'user');
+  const thinking = appendChatMsg('Thinking...', 'thinking');
+
+  // Build context for Groq
+  const reactionContext = currentReaction
+    ? `The user just simulated: "${currentReaction}". The simulation used MACE ML force field + NEB (Nudged Elastic Band) to find the transition state pathway with ${currentFrames.length} frames showing ${currentSymbols.length} atoms.`
+    : '';
+
+  chatHistory.push({ role: 'user', content: question });
+
+  try {
+    const res = await fetch('https://throttle-winter-cringe.ngrok-free.app/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: chatHistory,
+        context: reactionContext
+      })
+    });
+
+    const data = await res.json();
+    thinking.remove();
+
+    if (data.error) {
+      appendChatMsg('Error: ' + data.error, 'ai');
+    } else {
+      appendChatMsg(data.reply, 'ai');
+      chatHistory.push({ role: 'assistant', content: data.reply });
+    }
+  } catch (e) {
+    thinking.remove();
+    appendChatMsg('Connection error', 'ai');
+  }
+
+  document.getElementById('askBtn').disabled = false;
+}
+
+function appendChatMsg(text, type) {
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = `chat-msg ${type}`;
+  div.textContent = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────────
+document.getElementById('rxn').addEventListener('keydown', e => {
+  if (e.key === 'Enter') runSim();
+});
+
+document.getElementById('chatInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') askGroq();
+});
+</script>
+</body>
+</html>
