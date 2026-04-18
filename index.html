@@ -262,6 +262,42 @@
     text-align: right;
   }
 
+  .video-controls {
+    padding: 10px 20px 14px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .play-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--accent);
+    font-size: 0.9rem;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+
+  .play-btn:hover {
+    background: rgba(0,245,196,0.1);
+    border-color: var(--accent);
+  }
+
+  #scrubber {
+    flex: 1;
+    accent-color: var(--accent);
+    cursor: pointer;
+    height: 4px;
+  }
+
   #viewer {
     width: 100%;
     height: 420px;
@@ -480,10 +516,14 @@
           <input type="range" id="speedSlider" min="1" max="10" value="5" oninput="updateSpeed(this.value)">
           <span id="speedLabel">5</span>
         </div>
-        <div class="frame-counter" id="frameCounter">frame 0/0</div>
       </div>
     </div>
     <div id="viewer"></div>
+    <div class="video-controls">
+      <button class="play-btn" id="playBtn" onclick="togglePlay()">⏸</button>
+      <input type="range" id="scrubber" min="0" value="0" oninput="scrubTo(this.value)">
+      <div class="frame-counter" id="frameCounter">0/0</div>
+    </div>
     <div id="legend"></div>
   </div>
 
@@ -617,11 +657,34 @@ function buildXYZ(positions, symbols) {
   return xyz;
 }
 
+function togglePlay() {
+  if (animInterval) {
+    clearInterval(animInterval);
+    animInterval = null;
+    document.getElementById('playBtn').textContent = '▶';
+  } else {
+    restartAnimation();
+    document.getElementById('playBtn').textContent = '⏸';
+  }
+}
+
+function scrubTo(val) {
+  frameIndex = parseInt(val);
+  if (animInterval) { clearInterval(animInterval); animInterval = null; }
+  document.getElementById('playBtn').textContent = '▶';
+  drawFrame();
+  frameIndex = parseInt(val); // drawFrame increments, reset
+}
+
 function startAnimation() {
   const el = document.getElementById('viewer');
   el.innerHTML = '';
   viewer = $3Dmol.createViewer(el, { backgroundColor: '#020205' });
   frameIndex = 0;
+  const scrubber = document.getElementById('scrubber');
+  scrubber.max = currentFrames.length - 1;
+  scrubber.value = 0;
+  document.getElementById('playBtn').textContent = '⏸';
   restartAnimation();
 }
 
@@ -653,7 +716,8 @@ function drawFrame() {
   viewer.render();
 
   document.getElementById('frameCounter').textContent =
-    `frame ${frameIndex + 1}/${currentFrames.length}`;
+    `${frameIndex + 1}/${currentFrames.length}`;
+  document.getElementById('scrubber').value = frameIndex;
 
   frameIndex = (frameIndex + 1) % currentFrames.length;
 }
