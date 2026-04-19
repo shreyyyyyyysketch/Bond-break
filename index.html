@@ -206,6 +206,63 @@
     min-height: 16px;
   }
 
+  /* Progress bar */
+  #progress-wrap {
+    display: none;
+    margin-top: 14px;
+  }
+  #progress-wrap.visible { display: block; }
+  .progress-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.62rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+    letter-spacing: 0.08em;
+  }
+  .progress-track {
+    width: 100%;
+    height: 6px;
+    background: var(--border);
+    border-radius: 99px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width 0.6s ease;
+  }
+  .progress-steps {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    gap: 4px;
+  }
+  .progress-step {
+    flex: 1;
+    font-size: 0.58rem;
+    color: var(--muted);
+    text-align: center;
+    padding: 4px 2px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    transition: all 0.3s;
+    line-height: 1.3;
+  }
+  .progress-step.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(0,245,196,0.07);
+  }
+  .progress-step.done {
+    color: var(--muted);
+    border-color: var(--border);
+    background: rgba(0,245,196,0.03);
+  }
+  .progress-step.done::before { content: '✓ '; }
+
   /* Viewer */
   #viewer-section {
     background: var(--surface);
@@ -563,6 +620,25 @@
     </div>
     <div id="status"></div>
     <div id="parsed-info"></div>
+    <div id="progress-wrap">
+      <div class="progress-labels">
+        <span id="progress-label">Initialising...</span>
+        <span id="progress-pct">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <div class="progress-steps">
+        <div class="progress-step" id="ps1">Groq<br>Parse</div>
+        <div class="progress-step" id="ps2">Classify</div>
+        <div class="progress-step" id="ps3">PubChem</div>
+        <div class="progress-step" id="ps4">xTB<br>Relax</div>
+        <div class="progress-step" id="ps5">MACE<br>Relax</div>
+        <div class="progress-step" id="ps6">CI-NEB</div>
+        <div class="progress-step" id="ps7">Smooth</div>
+        <div class="progress-step" id="ps8">Done</div>
+      </div>
+    </div>
   </div>
 
   <div id="viewer-section">
@@ -680,6 +756,61 @@ function updateSpeed(val) {
   if (animInterval) restartAnimation();
 }
 
+// ── Progress Bar ──────────────────────────────────────────────────────────────
+const STEPS = [
+  { id: 'ps1', label: 'Groq: parsing reaction...',       pct: 10 },
+  { id: 'ps2', label: 'Classifying reaction type...',    pct: 20 },
+  { id: 'ps3', label: 'PubChem: fetching structures...', pct: 32 },
+  { id: 'ps4', label: 'xTB: pre-relaxation...',          pct: 46 },
+  { id: 'ps5', label: 'MACE: endpoint relaxation...',    pct: 60 },
+  { id: 'ps6', label: 'CI-NEB: transition state...',     pct: 82 },
+  { id: 'ps7', label: 'Smoothing animation frames...',   pct: 94 },
+  { id: 'ps8', label: 'Complete!',                       pct: 100 },
+];
+
+let _progressInterval = null;
+let _currentStep = 0;
+
+function showProgress() {
+  document.getElementById('progress-wrap').classList.add('visible');
+  _currentStep = 0;
+  STEPS.forEach(s => {
+    const el = document.getElementById(s.id);
+    el.classList.remove('active', 'done');
+  });
+  setProgressStep(0);
+  // Auto-advance steps on a realistic timer
+  const timings = [3000, 5000, 8000, 18000, 28000, 55000, 8000];
+  let elapsed = 0;
+  timings.forEach((delay, i) => {
+    elapsed += delay;
+    setTimeout(() => {
+      if (_currentStep <= i + 1) setProgressStep(i + 1);
+    }, elapsed);
+  });
+}
+
+function setProgressStep(idx) {
+  _currentStep = idx;
+  STEPS.forEach((s, i) => {
+    const el = document.getElementById(s.id);
+    el.classList.remove('active', 'done');
+    if (i < idx) el.classList.add('done');
+    else if (i === idx) el.classList.add('active');
+  });
+  const step = STEPS[Math.min(idx, STEPS.length - 1)];
+  document.getElementById('progress-fill').style.width = step.pct + '%';
+  document.getElementById('progress-pct').textContent = step.pct + '%';
+  document.getElementById('progress-label').textContent = step.label;
+}
+
+function hideProgress() {
+  setProgressStep(7); // mark all done
+  setTimeout(() => {
+    document.getElementById('progress-wrap').classList.remove('visible');
+  }, 1200);
+}
+
 // ── Simulation ────────────────────────────────────────────────────────────────
 async function runSim() {
   const rxn = document.getElementById('rxn').value.trim();
@@ -690,27 +821,34 @@ async function runSim() {
   if (animInterval) { clearInterval(animInterval); animInterval = null; }
 
   document.getElementById('simulateBtn').disabled = true;
-  setStatus('<span class="spinner"></span>Parsing reaction with Groq...', '');
+  setStatus('<span class="spinner"></span>Starting simulation...', '');
   setParsed(null);
   document.getElementById('viewer-section').classList.remove('visible');
   document.getElementById('energy-section').classList.remove('visible');
   document.getElementById('chat-section').classList.remove('visible');
+  showProgress();
 
   try {
     setStatus('<span class="spinner"></span>Running MACE + NEB simulation (~2 min)...', '');
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 420000); // 7 min timeout
+
     const res = await fetch('https://shreyasbestha9--bondbreak-api-fastapi-app.modal.run/simulate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
         reaction: rxn,
         solvent: document.getElementById('solventSelect').value || null
       })
     });
+    clearTimeout(timeout);
 
     const data = await res.json();
 
     if (data.error) {
+      hideProgress();
       setStatus('❌ ' + data.error, 'error');
       document.getElementById('simulateBtn').disabled = false;
       return;
@@ -720,6 +858,7 @@ async function runSim() {
     currentSymbols = data.symbols;
     currentBonds = data.bonds || [];   // explicit bond lists per frame
     setParsed(data.parsed);
+    hideProgress();
 
     setStatus(`✓ ${data.frame_count} frames · ${currentSymbols.length} atoms · ${data.solvent || 'auto'} · simulation complete`, '');
 
@@ -764,7 +903,12 @@ async function runSim() {
     startAnimation();
 
   } catch (e) {
-    setStatus('❌ Connection error — is the backend running?', 'error');
+    hideProgress();
+    if (e.name === 'AbortError') {
+      setStatus('❌ Request timed out — Modal cold start can take ~2 min. Please try again!', 'error');
+    } else {
+      setStatus('❌ Connection error — backend may be waking up. Wait 30s and try again.', 'error');
+    }
   }
 
   document.getElementById('simulateBtn').disabled = false;
