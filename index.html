@@ -479,6 +479,46 @@
     #simulateBtn { width: 100%; }
     #viewer { height: 320px; }
   }
+
+  /* Energy profile curve */
+  #energy-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    margin-top: 16px;
+    padding: 20px;
+    display: none;
+  }
+  #energy-section.visible { display: block; }
+
+  .energy-header {
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .energy-barrier {
+    color: var(--accent);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+  #energyCanvas {
+    width: 100%;
+    height: 120px;
+    display: block;
+  }
+  .energy-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-size: 0.6rem;
+    color: var(--muted);
+  }
 </style>
 </head>
 <body>
@@ -493,8 +533,26 @@
   <div class="input-section">
     <div class="input-label">Type any chemical reaction</div>
     <div class="input-row">
-      <input id="rxn" type="text" placeholder="e.g. ethanol oxidation" autocomplete="off" />
+      <input id="rxn" type="text" placeholder="e.g. SN2 substitution of methyl bromide" autocomplete="off" />
       <button id="simulateBtn" onclick="runSim()">Simulate ⚛️</button>
+    </div>
+    <div class="solvent-row" style="display:flex;align-items:center;gap:10px;margin-top:10px;">
+      <span style="font-size:0.65rem;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;">Solvent</span>
+      <select id="solventSelect" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Space Mono',monospace;font-size:0.75rem;padding:6px 10px;outline:none;cursor:pointer;">
+        <option value="">Auto (Groq suggests)</option>
+        <option value="water">Water</option>
+        <option value="acetonitrile">Acetonitrile</option>
+        <option value="dmso">DMSO</option>
+        <option value="ethanol">Ethanol</option>
+        <option value="methanol">Methanol</option>
+        <option value="thf">THF</option>
+        <option value="chloroform">Chloroform</option>
+        <option value="dcm">DCM</option>
+        <option value="toluene">Toluene</option>
+        <option value="hexane">Hexane</option>
+        <option value="gas">Gas phase</option>
+      </select>
+      <span id="solventHint" style="font-size:0.65rem;color:var(--muted);font-style:italic;"></span>
     </div>
     <div class="examples">
       <span class="example-chip" onclick="setExample(this)">SN2 substitution</span>
@@ -527,6 +585,19 @@
     <div id="legend"></div>
   </div>
 
+  <div id="energy-section">
+    <div class="energy-header">
+      <span>Reaction Energy Profile</span>
+      <span class="energy-barrier" id="barrierLabel"></span>
+    </div>
+    <canvas id="energyCanvas"></canvas>
+    <div class="energy-labels">
+      <span>Reactants</span>
+      <span>Transition State</span>
+      <span>Products</span>
+    </div>
+  </div>
+
   <div id="chat-section">
     <div class="chat-header">Ask about this reaction</div>
     <div id="chat-messages"></div>
@@ -551,6 +622,7 @@ let viewer = null;
 let animInterval = null;
 let currentFrames = [];
 let currentSymbols = [];
+let currentBonds = [];    // NEW — [[i,j,order],...] per frame
 let currentReaction = '';
 let frameIndex = 0;
 let animSpeed = 150; // ms per frame
@@ -567,6 +639,20 @@ const ELEMENT_COLORS = {
 
 function elementColor(sym) {
   return ELEMENT_COLORS[sym] || ELEMENT_COLORS.default;
+}
+
+// CPK van-der-Waals radii scaled for display (Å)
+const ATOM_RADII = {
+  H: 0.25, C: 0.40, N: 0.38, O: 0.36, F: 0.32,
+  P: 0.45, S: 0.44, Cl: 0.42, Br: 0.48, I: 0.52,
+  Na: 0.50, K: 0.55, Ca: 0.52, Fe: 0.48, Cu: 0.46, Zn: 0.44,
+};
+function atomRadius(sym) { return ATOM_RADII[sym] || 0.38; }
+
+// Bond color = blend of the two atom colors (simple average)
+function bondColor(symI, symJ) {
+  // For now just use a neutral grey-teal; could interpolate CPK colors later
+  return '#5a8a7a';
 }
 
 // ── UI helpers ─────────────────────────────────────────────────────────────────
@@ -600,21 +686,26 @@ async function runSim() {
   if (!rxn) return;
 
   currentReaction = rxn;
+  currentBonds = [];
   if (animInterval) { clearInterval(animInterval); animInterval = null; }
 
   document.getElementById('simulateBtn').disabled = true;
   setStatus('<span class="spinner"></span>Parsing reaction with Groq...', '');
   setParsed(null);
   document.getElementById('viewer-section').classList.remove('visible');
+  document.getElementById('energy-section').classList.remove('visible');
   document.getElementById('chat-section').classList.remove('visible');
 
   try {
     setStatus('<span class="spinner"></span>Running MACE + NEB simulation (~2 min)...', '');
 
-    const res = await fetch('https://throttle-winter-cringe.ngrok-free.dev/simulate', {
+    const res = await fetch('https://shreyasbestha9--bondbreak-api-fastapi-app.modal.run/simulate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reaction: rxn })
+      body: JSON.stringify({
+        reaction: rxn,
+        solvent: document.getElementById('solventSelect').value || null
+      })
     });
 
     const data = await res.json();
@@ -627,12 +718,43 @@ async function runSim() {
 
     currentFrames = data.frames;
     currentSymbols = data.symbols;
+    currentBonds = data.bonds || [];   // explicit bond lists per frame
     setParsed(data.parsed);
 
-    setStatus(`✓ ${data.frame_count} frames · ${currentSymbols.length} atoms · simulation complete`, '');
+    setStatus(`✓ ${data.frame_count} frames · ${currentSymbols.length} atoms · ${data.solvent || 'auto'} · simulation complete`, '');
+
+    // Update solvent hint to show what was actually used
+    if (data.solvent) {
+      document.getElementById('solventHint').textContent =
+        `used: ${data.solvent}${data.solvent_important ? ' (important for this reaction)' : ''}`;
+    }
+
+    // Show reaction type badge
+    const typeLabel = data.reaction_type
+      ? `${data.reaction_type.replace('_', ' ')} · confidence ${Math.round((data.rxn_confidence||0)*100)}%`
+      : '';
+    if (typeLabel) {
+      document.getElementById('parsed-info').textContent =
+        (document.getElementById('parsed-info').textContent || '') + `  [${typeLabel}]`;
+    }
+
+    // Show warning for multi-fragment / approximate results
+    if (data.warning) {
+      const warn = document.createElement('div');
+      warn.style.cssText = 'font-size:0.7rem;color:var(--warn);margin-top:6px;';
+      warn.textContent = '⚠ ' + data.warning;
+      document.getElementById('parsed-info').appendChild(warn);
+    }
 
     buildLegend(currentSymbols);
     document.getElementById('viewer-section').classList.add('visible');
+
+    // Energy profile
+    if (data.energies && data.energies.length) {
+      drawEnergyProfile(data.energies, data.barrier_ev);
+      document.getElementById('energy-section').classList.add('visible');
+    }
+
     document.getElementById('chat-section').classList.add('visible');
 
     // Reset chat for new reaction
@@ -696,21 +818,74 @@ function restartAnimation() {
 function drawFrame() {
   if (!currentFrames.length) return;
   const positions = currentFrames[frameIndex];
-  const xyz = buildXYZ(positions, currentSymbols);
+  const bonds     = currentBonds[frameIndex] || null;
 
   viewer.clear();
-  viewer.addModel(xyz, 'xyz');
 
-  // Style with CPK colors per element
-  currentSymbols.forEach((sym, idx) => {
-    viewer.setStyle(
-      { index: idx },
-      {
-        sphere: { radius: 0.35, color: elementColor(sym) },
-        stick:  { radius: 0.12, color: '#888888' }
+  if (bonds && bonds.length) {
+    // ── Explicit bond mode — backend told us exactly which bonds exist ────────
+    // Build a minimal SDF-style model so 3Dmol uses OUR bonds, not its own
+    // We use addModel with xyz first, then removeAllShapes and add bonds manually
+
+    // 1. Add atoms as spheres (no automatic bond detection)
+    const xyz = buildXYZ(positions, currentSymbols);
+    viewer.addModel(xyz, 'xyz');
+
+    // Turn off all auto-detected bonds and sticks
+    viewer.setStyle({}, { sphere: { radius: 0 } });
+
+    // 2. Style each atom as CPK sphere
+    currentSymbols.forEach((sym, idx) => {
+      viewer.setStyle(
+        { index: idx },
+        { sphere: { radius: atomRadius(sym), color: elementColor(sym) } }
+      );
+    });
+
+    // 3. Draw explicit bonds as cylinders
+    bonds.forEach(([i, j, order]) => {
+      const p1 = { x: positions[i][0], y: positions[i][1], z: positions[i][2] };
+      const p2 = { x: positions[j][0], y: positions[j][1], z: positions[j][2] };
+
+      // Bond radius scales with order: single=0.12, double=0.10×2, triple=0.08×3
+      const baseR = order === 1 ? 0.12 : order === 2 ? 0.09 : 0.07;
+      const color = bondColor(currentSymbols[i], currentSymbols[j]);
+
+      if (order === 1) {
+        viewer.addCylinder({ start: p1, end: p2, radius: baseR, color, fromCap: 1, toCap: 1 });
+      } else {
+        // Offset multiple bonds slightly so they're visually distinct
+        const offsets = order === 2 ? [-0.09, 0.09] : [-0.12, 0, 0.12];
+        offsets.forEach(off => {
+          // Perpendicular offset in a fixed plane
+          const dx = positions[j][0] - positions[i][0];
+          const dy = positions[j][1] - positions[i][1];
+          const len = Math.sqrt(dx*dx + dy*dy) || 1;
+          const ox = (-dy / len) * off;
+          const oy = ( dx / len) * off;
+          viewer.addCylinder({
+            start: { x: p1.x + ox, y: p1.y + oy, z: p1.z },
+            end:   { x: p2.x + ox, y: p2.y + oy, z: p2.z },
+            radius: baseR, color, fromCap: 1, toCap: 1
+          });
+        });
       }
-    );
-  });
+    });
+
+  } else {
+    // ── Fallback: let 3Dmol guess bonds (old behaviour, no bond data) ─────────
+    const xyz = buildXYZ(positions, currentSymbols);
+    viewer.addModel(xyz, 'xyz');
+    currentSymbols.forEach((sym, idx) => {
+      viewer.setStyle(
+        { index: idx },
+        {
+          sphere: { radius: atomRadius(sym), color: elementColor(sym) },
+          stick:  { radius: 0.12, color: '#888888' }
+        }
+      );
+    });
+  }
 
   viewer.zoomTo();
   viewer.render();
@@ -758,7 +933,7 @@ async function askGroq() {
   chatHistory.push({ role: 'user', content: question });
 
   try {
-    const res = await fetch('https://throttle-winter-cringe.ngrok-free.dev/chat', {
+    const res = await fetch('https://shreyasbestha9--bondbreak-api-fastapi-app.modal.run/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -792,6 +967,98 @@ function appendChatMsg(text, type) {
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
   return div;
+}
+
+// ── Energy Profile Curve ──────────────────────────────────────────────────────
+function drawEnergyProfile(energies, barrierEv) {
+  const canvas = document.getElementById('energyCanvas');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const W = rect.width - 40;   // account for padding
+  const H = 120;
+
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const pad = { top: 16, right: 12, bottom: 10, left: 42 };
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top  - pad.bottom;
+
+  const minE = Math.min(...energies);
+  const maxE = Math.max(...energies);
+  const rangeE = maxE - minE || 1;
+
+  // Map energy index → canvas coords
+  function ex(i) { return pad.left + (i / (energies.length - 1)) * plotW; }
+  function ey(e) { return pad.top + plotH - ((e - minE) / rangeE) * plotH; }
+
+  // ── Gradient fill under curve ────────────────────────────────────────────
+  const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
+  grad.addColorStop(0, 'rgba(0,245,196,0.18)');
+  grad.addColorStop(1, 'rgba(0,245,196,0.00)');
+
+  ctx.beginPath();
+  ctx.moveTo(ex(0), ey(energies[0]));
+  for (let i = 1; i < energies.length; i++) {
+    const x0 = ex(i - 1), y0 = ey(energies[i - 1]);
+    const x1 = ex(i),     y1 = ey(energies[i]);
+    const cx = (x0 + x1) / 2;
+    ctx.bezierCurveTo(cx, y0, cx, y1, x1, y1);
+  }
+  ctx.lineTo(ex(energies.length - 1), pad.top + plotH);
+  ctx.lineTo(ex(0), pad.top + plotH);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // ── Curve line ────────────────────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.moveTo(ex(0), ey(energies[0]));
+  for (let i = 1; i < energies.length; i++) {
+    const x0 = ex(i - 1), y0 = ey(energies[i - 1]);
+    const x1 = ex(i),     y1 = ey(energies[i]);
+    const cx = (x0 + x1) / 2;
+    ctx.bezierCurveTo(cx, y0, cx, y1, x1, y1);
+  }
+  ctx.strokeStyle = '#00f5c4';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // ── TS peak marker ────────────────────────────────────────────────────────
+  const tsIdx = energies.indexOf(Math.max(...energies));
+  const tsx = ex(tsIdx), tsy = ey(energies[tsIdx]);
+
+  ctx.beginPath();
+  ctx.arc(tsx, tsy, 4, 0, Math.PI * 2);
+  ctx.fillStyle = '#ff4d6d';
+  ctx.fill();
+
+  // Dashed vertical line from TS peak to baseline
+  ctx.beginPath();
+  ctx.setLineDash([3, 3]);
+  ctx.moveTo(tsx, tsy + 5);
+  ctx.lineTo(tsx, pad.top + plotH);
+  ctx.strokeStyle = 'rgba(255,77,109,0.35)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // ── Y-axis labels ─────────────────────────────────────────────────────────
+  ctx.fillStyle = '#555570';
+  ctx.font = `${9 * dpr / dpr}px "Space Mono", monospace`;
+  ctx.textAlign = 'right';
+  ctx.fillText(`${maxE.toFixed(2)} eV`, pad.left - 4, pad.top + 6);
+  ctx.fillText(`${minE.toFixed(2)} eV`, pad.left - 4, pad.top + plotH);
+
+  // ── Barrier label ─────────────────────────────────────────────────────────
+  const bEv = barrierEv != null ? barrierEv : (maxE - energies[0]);
+  document.getElementById('barrierLabel').textContent =
+    `barrier: ${bEv.toFixed(3)} eV`;
 }
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
